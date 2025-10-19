@@ -1,58 +1,89 @@
 import { ImageProps } from 'next/image';
-
 import { getCldImageUrl } from '../helpers/getCldImageUrl';
 
+/**
+ * Options specific to Cloudinary transformations.
+ */
 export interface CloudinaryLoaderCldOptions {
+  format?: string; // e.g., 'webp', 'jpg'
+  quality?: string | number; // e.g., 'auto', 80
+  crop?: 'fill' | 'fit' | 'scale';
+  gravity?: 'auto' | 'face' | 'center';
+  [key: string]: any; // additional Cloudinary params
 }
 
+/**
+ * Loader-specific overrides for image sizing.
+ */
 export interface CloudinaryLoaderLoaderOptions {
-  height?: string | number;
-  width?: string | number;
+  width?: number;
+  height?: number;
 }
 
-export interface CloudinaryLoader {
-  loaderOptions: CloudinaryLoaderLoaderOptions;
+/**
+ * Full input for the Cloudinary loader function.
+ */
+export interface CloudinaryLoaderInput {
+  loaderOptions?: CloudinaryLoaderLoaderOptions;
   imageProps: ImageProps;
-  cldOptions: CloudinaryLoaderCldOptions;
-  cldConfig?: object;
+  cldOptions?: CloudinaryLoaderCldOptions;
+  cldConfig?: Record<string, any>;
 }
 
-export function cloudinaryLoader({ loaderOptions, imageProps, cldOptions, cldConfig = {} }: CloudinaryLoader) {
-  const options = {
+/**
+ * Helper to preserve aspect ratio based on width multiplier.
+ */
+function applyAspectRatio(originalWidth: number, originalHeight: number, newWidth: number) {
+  return Math.floor((originalHeight / originalWidth) * newWidth);
+}
+
+/**
+ * Cloudinary loader for Next.js Image component.
+ * Produces optimized URLs based on imageProps, loader options, and Cloudinary configuration.
+ */
+export function cloudinaryLoader({
+  loaderOptions = {},
+  imageProps,
+  cldOptions = {},
+  cldConfig = {}
+}: CloudinaryLoaderInput) {
+  // Start with default imageProps and Cloudinary options
+  const options: Record<string, any> = {
     ...imageProps,
     ...cldOptions
-  }
+  };
 
-  options.width = typeof options.width === 'string' ? parseInt(options.width) : options.width;
-  options.height = typeof options.height === 'string' ? parseInt(options.height) : options.height;
-  
-  // // The loader options are used to create dynamic sizing when working with responsive images
-  // // so these should override the default options collected from the props alone if
-  // // the results are different. While we don't always use the height in the loader logic,
-  // // we always pass it here, as the usage is determined later based on cropping.js
+  // Ensure width and height are numbers
+  options.width = typeof options.width === 'string' ? parseInt(options.width, 10) : options.width;
+  options.height = typeof options.height === 'string' ? parseInt(options.height, 10) : options.height;
 
-  if ( typeof loaderOptions?.width === 'number' && typeof options.width === 'number' && loaderOptions.width !== options.width ) {
+  // Apply loaderOptions overrides while maintaining aspect ratio
+  if (loaderOptions.width && options.width && loaderOptions.width !== options.width) {
     const multiplier = loaderOptions.width / options.width;
-    
     options.width = loaderOptions.width;
 
-    // The height may change based off of the value passed through via the loader options
-    // In an example where the user sizes is 800x600, but the loader is passing in 400
-    // due to responsive sizing, we want to ensure we're using a height that will
-    // resolve to the same aspect ratio
-    
-    if ( typeof options.height === 'number' ) {
+    if (options.height) {
       options.height = Math.floor(options.height * multiplier);
     }
-  } else if ( typeof loaderOptions?.width === 'number' && typeof options?.width !== 'number' ) {
-    // If we don't have a width on the options object, this may mean that the component is using
-    // the fill option: https://nextjs.org/docs/pages/api-reference/components/image#fill
-    // The Fill option does not allow someone to pass in a width or a height
-    // If this is the case, we still need to define a width for sizing optimization but also
-    // for responsive sizing to take effect, so we can utilize the loader width for the base width
-    options.width = loaderOptions?.width;
+  } else if (loaderOptions.width && !options.width) {
+    // Handle Next.js fill mode
+    options.width = loaderOptions.width;
   }
 
-  // @ts-ignore
-  return getCldImageUrl(options, cldConfig);
+  if (loaderOptions.height && !options.height) {
+    // Compute height for responsive fill mode if missing
+    options.height = applyAspectRatio(options.width || loaderOptions.width || 0, options.height || 0, loaderOptions.width || options.width || 0);
+  }
+
+  // Future-proof: merge any additional Cloudinary config parameters
+  const finalConfig = {
+    ...cldConfig,
+    transformations: {
+      ...cldOptions,
+      width: options.width,
+      height: options.height
+    }
+  };
+
+  return getCldImageUrl(options, finalConfig);
 }
